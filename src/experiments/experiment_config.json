@@ -1,0 +1,176 @@
+{
+  "experiment_settings": {
+    "dataset_size": 500,
+    "test_split_ratio": 0.2,
+    "random_seed": 42,
+    "batch_size": 10,
+    "max_workers": 4,
+    "hardware": {
+      "gpu_model": "NVIDIA RTX 4090",
+      "gpu_memory_gb": 24,
+      "cpu_cores": 16,
+      "ram_gb": 32
+    }
+  },
+  
+  "baseline_methods": {
+    "direct_vlm": {
+      "description": "Single Qwen2.5-VL-7B model without agent coordination",
+      "model": "Qwen/Qwen2.5-VL-7B-Instruct",
+      "use_agents": false,
+      "use_rag": false,
+      "use_mcp": false
+    },
+    "llm_only": {
+      "description": "Text-only LLM ignoring visual information", 
+      "model": "Qwen/Qwen2.5-7B-Instruct",
+      "process_images": false,
+      "use_agents": false
+    },
+    "traditional_rag": {
+      "description": "Standard RAG without multi-modal or agent specialization",
+      "model": "Qwen/Qwen2.5-7B-Instruct",
+      "use_agents": false,
+      "use_rag": true,
+      "use_mcp": false
+    },
+    "autogpt_devops": {
+      "description": "AutoGPT adapted for DevOps scenarios",
+      "model": "Qwen/Qwen2.5-7B-Instruct", 
+      "use_chain_of_thought": true,
+      "use_tools": true,
+      "max_iterations": 5
+    },
+    "multi_model_ensemble": {
+      "description": "Multiple open-source models with result averaging",
+      "models": [
+        "Qwen/Qwen2.5-7B-Instruct",
+        "THUDM/chatglm3-6b",
+        "meta-llama/Llama-2-7b-chat-hf"
+      ],
+      "ensemble_method": "average_confidence"
+    }
+  },
+  
+  "ablation_studies": {
+    "agent_removal": {
+      "no_visual": "Remove VisualAnalysisAgent",
+      "no_log": "Remove LogAnalysisAgent", 
+      "no_metrics": "Remove MetricsAnalysisAgent",
+      "no_knowledge": "Remove KnowledgeAgent",
+      "no_route": "Remove RouteAgent (random assignment)",
+      "no_rag": "Remove RAG functionality",
+      "no_mcp": "Remove MCP tool integration"
+    },
+    "agent_replacement": {
+      "normal_llm": "Replace specialized agents with general LLM",
+      "simple_route": "Replace intelligent routing with simple rules",
+      "fixed_assignment": "Use fixed agent assignment instead of dynamic routing"
+    }
+  },
+  
+  "hyperparameter_analysis": {
+    "max_turns": {
+      "description": "Maximum conversation turns",
+      "values": [1, 3, 5, 10],
+      "default": 3
+    },
+    "max_length": {
+      "description": "Maximum generation length",
+      "values": [256, 512, 1024, 2048],
+      "default": 512
+    },
+    "confidence_threshold": {
+      "description": "Agent confidence threshold",
+      "values": [0.6, 0.7, 0.8, 0.9],
+      "default": 0.8
+    },
+    "temperature": {
+      "description": "Model temperature parameter",
+      "values": [0.1, 0.3, 0.7, 1.0],
+      "default": 0.7
+    },
+    "retrieval_top_k": {
+      "description": "Number of retrieved documents",
+      "values": [3, 5, 10, 20],
+      "default": 5
+    },
+    "routing_strategy": {
+      "description": "Agent routing strategy",
+      "values": ["rule_based", "ml_based", "hybrid"],
+      "default": "rule_based"
+    }
+  },
+  
+  "evaluation_metrics": {
+    "primary_metrics": [
+      "resolution_accuracy",
+      "response_time", 
+      "completeness_score",
+      "multimodal_integration",
+      "success_rate"
+    ],
+    "secondary_metrics": [
+      "agent_utilization",
+      "confidence_distribution",
+      "error_analysis",
+      "resource_usage"
+    ]
+  },
+  
+  "open_source_models": {
+    "qwen_series": [
+      "Qwen/Qwen2.5-7B-Instruct",
+      "Qwen/Qwen2.5-14B-Instruct",
+      "Qwen/Qwen2.5-VL-7B-Instruct"
+    ],
+    "llama_series": [
+      "meta-llama/Llama-2-7b-chat-hf",
+      "meta-llama/Llama-2-13b-chat-hf"
+    ],
+    "chinese_models": [
+      "THUDM/chatglm3-6b",
+      "baichuan-inc/Baichuan2-7B-Chat",
+      "internlm/internlm2-chat-7b"
+    ]
+  },
+  
+  "dataset_categories": {
+    "text_queries": {
+      "count": 200,
+      "description": "Pure text queries about technical problems",
+      "examples": [
+        "Redis connection timeout troubleshooting",
+        "Kafka consumer lag analysis",
+        "MySQL deadlock resolution"
+      ]
+    },
+    "image_queries": {
+      "count": 150,
+      "description": "Queries requiring image analysis",
+      "examples": [
+        "Monitoring dashboard interpretation",
+        "Error screenshot analysis",
+        "System architecture diagram understanding"
+      ]
+    },
+    "retrieval_queries": {
+      "count": 100,
+      "description": "Queries requiring document retrieval",
+      "examples": [
+        "@mysql_troubleshooting.md deadlock solutions",
+        "@redis_problems.md performance optimization",
+        "@monitoring_guide.md alert configuration"
+      ]
+    },
+    "multimodal_queries": {
+      "count": 50,
+      "description": "Complex queries requiring multiple modalities",
+      "examples": [
+        "Correlate logs with monitoring graphs",
+        "Analyze screenshot with documentation reference",
+        "Multi-service incident investigation"
+      ]
+    }
+  }
+}
