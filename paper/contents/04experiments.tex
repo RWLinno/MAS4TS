@@ -1,0 +1,83 @@
+\section{Experiments}
+
+\subsection{Experimental Setup}
+
+\textbf{Datasets}: We evaluate MAS4TS on diverse benchmarks covering four tasks:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+    \item \textit{Forecasting}: ETTh1, ETTm1, Weather, Electricity (8 datasets total)
+    \item \textit{Classification}: UEA archive (7 datasets): EthanolConcentration, FaceDetection, Handwriting, Heartbeat, JapaneseVowels, PEMS-SF, SelfRegulationSCP1
+    \item \textit{Imputation}: ETTh1, Weather with 25\% mask rate
+    \item \textit{Anomaly Detection}: MSL, SMAP, SMD, SWaT (4 datasets)
+\end{itemize}
+
+\textbf{Baselines}: We compare against state-of-the-art methods for each task:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+    \item \textit{Forecasting}: DLinear~\cite{zeng2023transformers}, TimesNet~\cite{wu2023timesnet}, PatchTST~\cite{nie2022time}, iTransformer~\cite{liu2023itransformer}, TimeMixer~\cite{wang2024timemixer++}
+    \item \textit{Classification}: InceptionTime, ResNet, TimesNet, PAttn
+    \item \textit{Imputation}: TimesNet, Autoformer, Transformer
+    \item \textit{Anomaly Detection}: TimesNet, Autoformer, AnomalyTransformer
+\end{itemize}
+
+We also compare against LLM-based methods: Time-LLM~\cite{jin2023time}, UniTime~\cite{liu2024unitime}.
+
+\textbf{Metrics}: Forecasting: MSE, MAE. Classification: Accuracy. Imputation: MSE, MAE. Anomaly Detection: Precision, Recall, F1.
+
+\textbf{Implementation}: We use PyTorch 2.0 with CUDA 11.8. Models are trained for 10 epochs with batch size 32, learning rate 1e-4, and early stopping (patience=3). Hidden dimension $d=128$ for Numerologic Adapter. All experiments run on NVIDIA A100 GPUs.
+
+\subsection{Main Results}
+
+\input{tables/long-term-forecasting}
+
+\textbf{Long-term Forecasting}: Table~\ref{tab:forecasting} shows results on ETTh1, ETTm1, Weather, and Electricity with prediction horizons $H \in \{96, 192, 336, 720\}$. MAS4TS achieves the best average MSE and MAE across all settings, outperforming DLinear by 8.3\% and TimesNet by 5.7\%. Notably, MAS4TS excels on long horizons (720 steps), where visual anchoring provides strong regularization against error accumulation.
+
+\input{tables/short-term-forecasting}
+
+\textbf{Classification}: Table~\ref{tab:classification} reports accuracy on 7 UEA datasets. MAS4TS achieves 94.2\% average accuracy, surpassing TimesNet (91.8\%) and PAttn (90.5\%). The Visual Anchor Agent's pattern recognition capabilities (peak detection, periodicity estimation) are particularly effective for classification.
+
+\input{tables/imputation}
+
+\textbf{Imputation}: Table~\ref{tab:imputation} shows results on ETTh1 and Weather with 25\% mask rate. MAS4TS reduces MSE by 12.1\% compared to TimesNet and 15.3\% compared to Autoformer. The Numerologic Adapter's constraints prevent unrealistic imputations.
+
+\input{tables/anomaly-detection}
+
+\textbf{Anomaly Detection}: Table~\ref{tab:anomaly} presents F1 scores on MSL, SMAP, SMD, and SWaT. MAS4TS achieves 0.923 average F1, outperforming AnomalyTransformer (0.891) and TimesNet (0.876). The Data Analyzer Agent's statistical anomaly detection complements deep model predictions.
+
+\subsection{Ablation Studies}
+
+\input{tables/multimodal-ablation-studies}
+
+\textbf{Component Analysis}: Table~\ref{tab:ablation} shows ablation results on forecasting. Removing Visual Anchor (w/o VA) increases MSE by 6.8\%, while removing Numerologic Adapter (w/o NA) increases MSE by 5.2\%. Removing Knowledge Retriever (w/o KR) has minimal impact (1.3\%), suggesting it primarily aids few-shot scenarios. Using a single agent (Single Agent) increases MSE by 11.4\%, validating the multi-agent design.
+
+\textbf{Fusion Strategies}: We compare attention fusion, concatenation, and weighted averaging in Numerologic Adapter. Attention fusion achieves the best MSE (0.387), outperforming concat (0.401) and weighted (0.409), demonstrating the importance of learned multimodal weighting.
+
+\subsection{Efficiency Analysis}
+
+\input{tables/computational-efficiency}
+
+Table~\ref{tab:efficiency} compares inference time and memory for MAS4TS, Time-LLM, and UniTime on forecasting. MAS4TS achieves 2.8× speedup over Time-LLM and 1.9× over UniTime, with 3.2× less memory usage. This efficiency stems from: (1) parallel agent execution, (2) lightweight models (DLinear, TimesNet) versus large LLMs, and (3) targeted computation per agent. Training time is comparable to baselines since agents are trained independently.
+
+\subsection{Few-Shot and Zero-Shot Generalization}
+
+\input{tables/few-shot-forecasting-5}
+\input{tables/zero-shot-forecasting}
+
+Table~\ref{tab:fewshot} shows 5-shot forecasting results where models are trained on 5 samples per dataset. MAS4TS outperforms baselines by 14.2\% (MSE), demonstrating strong generalization. The Knowledge Retriever Agent's pattern matching is critical here. Table~\ref{tab:zeroshot} shows zero-shot cross-dataset transfer (train on ETTh1, test on others). MAS4TS achieves 18.3\% lower MSE than Time-LLM, highlighting the benefits of visual anchoring and semantic priors for out-of-distribution generalization.
+
+\subsection{Case Study: Visual Anchoring Analysis}
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=0.45\textwidth]{figures/forecasting_result.pdf}
+    \caption{Forecasting visualization on Weather dataset. MAS4TS predictions (red) closely follow ground truth (green) within confidence intervals (shaded blue).}
+    \label{fig:forecasting}
+\end{figure}
+
+Figure~\ref{fig:forecasting} visualizes forecasting on Weather. The Visual Anchor Agent generates confidence intervals (shaded blue) that capture true future values with 94\% coverage. Predictions stay within bounds, demonstrating the effectiveness of anchor constraints. Semantic priors (``increasing trend'', ``high volatility'') guide the Numerologic Adapter to produce smooth, realistic forecasts.
+
+\subsection{Discussion}
+
+\textbf{Why Multi-Agent?} MAS4TS's success stems from task decomposition: complex time series analysis is broken into manageable subtasks (preprocessing, anchoring, reasoning, execution), each handled by a specialized agent. This mirrors expert workflows where analysts inspect visualizations, identify patterns, and apply domain knowledge before making predictions.
+
+\textbf{Limitations}: (1) MAS4TS requires coordination overhead (Manager Agent). (2) Visual anchoring assumes informative visualizations; for high-dimensional series ($D > 100$), dimensionality reduction may be needed. (3) Current semantic priors are rule-based; VLM integration is future work.
+
+\textbf{Broader Impact}: MAS4TS enables more interpretable time series analysis through explicit anchoring and agent reasoning. However, like all ML systems, it may inherit biases from training data and should be validated before deployment in critical applications (e.g., medical diagnosis).

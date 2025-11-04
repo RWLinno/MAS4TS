@@ -1,0 +1,41 @@
+\section{Introduction}
+
+\begin{figure}[t!]
+    \centering    
+    \includegraphics[width=0.48\textwidth]{figures/framework.pdf}
+    \caption{Overview of MAS4TS: A multi-agent system combining visual anchoring, numerical reasoning, and task-specific executors for general time series analysis.}
+    \label{fig:intro}
+    \vspace{-1em}
+\end{figure}
+
+Time series analysis is fundamental to applications across finance~\cite{idrees2019prediction}, healthcare~\cite{karevan2020transductive}, energy systems~\cite{deb2017review}, and IoT~\cite{zheng2020traffic}. Recent advances in pre-trained large language models (LLMs) for time series~\cite{jin2023time,liu2024unitime} have demonstrated improved generalization and contextual understanding compared to specialized models. However, these approaches face critical limitations: \textbf{(1) Efficiency}: LLMs exhibit low token utilization and slow inference due to their sequential nature, and \textbf{(2) Generalization}: Most methods target a single task (e.g., forecasting), failing to generalize across the diverse requirements of classification, imputation, and anomaly detection.
+
+\textbf{Multi-agent systems} have recently shown promise in complex reasoning tasks~\cite{wu2023autogen,hong2023metagpt}, where multiple specialized agents collaborate to solve problems more efficiently than monolithic models. This paradigm offers two key advantages: (1) \textit{parallelism} through concurrent agent execution, and (2) \textit{specialization} where each agent focuses on a specific subtask. However, applying multi-agent systems to time series analysis remains largely unexplored, with existing work~\cite{liang2024foundation} lacking mechanisms for cross-modal reasoning and numerical precision.
+
+To bridge this gap, we introduce \textbf{MAS4TS} (Multi-Agent System for Time Series), a novel framework that addresses the aforementioned challenges through multi-agent collaboration. Our key insight is that time series analysis benefits from \textit{dividing complex tasks into specialized subtasks handled by coordinated agents}, rather than relying on a single end-to-end model. As illustrated in Figure~\ref{fig:intro}, MAS4TS consists of six specialized agents coordinated by a central manager:
+
+\vspace{-0.5em}
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+    \item \textbf{Data Analyzer Agent}: Performs preprocessing, anomaly detection, and statistical feature extraction.
+    \item \textbf{Visual Anchor Agent}: Converts time series to images and generates prediction ``anchors'' (confidence intervals and key points) using vision-language models.
+    \item \textbf{Numerologic Adapter Agent}: Fuses multimodal information (anchors + data + semantics) for precise numerical reasoning.
+    \item \textbf{Knowledge Retriever Agent}: Maintains a vector database of historical patterns for few-shot learning.
+    \item \textbf{Task Executor Agent}: Invokes specialized time series models for final predictions.
+    \item \textbf{Manager Agent}: Orchestrates agent execution plans and integrates results.
+\end{itemize}
+\vspace{-0.5em}
+
+The core innovations of MAS4TS are \textit{visual anchoring} and \textit{numerical reasoning}. Visual anchoring leverages vision-language models to understand temporal patterns from visualizations, generating semantic priors (e.g., ``increasing trend'', ``high volatility'') and numerical anchors (confidence intervals for future values). Numerical reasoning then combines these multimodal cues with raw data through attention-based fusion, producing refined features for downstream tasks. This design enables MAS4TS to achieve superior performance across four tasks while maintaining efficiency through parallel agent execution.
+
+Our contributions are summarized as follows:
+
+\vspace{-0.5em}
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+    \item We propose MAS4TS, the first multi-agent system for general time series analysis, achieving state-of-the-art performance on forecasting, classification, imputation, and anomaly detection.
+    
+    \item We introduce visual anchoring and numerical reasoning as key mechanisms, where agents generate prediction anchors from visualizations and fuse multimodal information for precise inference.
+    
+    \item We demonstrate that multi-agent collaboration achieves better efficiency-performance trade-offs than monolithic LLMs through parallel execution and task specialization.
+    
+    \item Comprehensive experiments show MAS4TS outperforms baselines across multiple benchmarks while maintaining strong few-shot and zero-shot generalization.
+\end{itemize}

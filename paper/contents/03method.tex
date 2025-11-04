@@ -1,0 +1,88 @@
+\section{Methodology}
+
+\subsection{Problem Formulation}
+
+Given a multivariate time series $\mathbf{X} = \{x_1, x_2, \ldots, x_T\} \in \mathbb{R}^{T \times D}$ with $T$ time steps and $D$ features, we aim to solve four fundamental time series tasks: \textbf{(1) Forecasting}: predict future values $\mathbf{Y} = \{x_{T+1}, \ldots, x_{T+H}\} \in \mathbb{R}^{H \times D}$; \textbf{(2) Classification}: assign class label $y \in \{1, \ldots, C\}$; \textbf{(3) Imputation}: fill missing values at masked positions $\mathcal{M} \subset \{1, \ldots, T\} \times \{1, \ldots, D\}$; \textbf{(4) Anomaly Detection}: identify anomalous time steps $\mathcal{A} \subset \{1, \ldots, T\}$.
+
+\subsection{MAS4TS Framework}
+
+\begin{figure*}[t!]
+    \centering
+    \includegraphics[width=0.95\textwidth]{figures/framework.pdf}
+    \caption{Architecture of MAS4TS showing the multi-agent workflow: (1) Manager Agent creates execution plan, (2) Data Analyzer extracts features, (3) Visual Anchor generates anchors from visualizations, (4) Numerologic Adapter fuses multimodal information, (5) Task Executor produces final predictions.}
+    \label{fig:framework}
+\end{figure*}
+
+As shown in Figure~\ref{fig:framework}, MAS4TS consists of six specialized agents orchestrated by a Manager Agent. We describe each component below.
+
+\subsubsection{Manager Agent}
+
+The Manager Agent serves as the central coordinator, dynamically creating execution plans based on task type. For forecasting, the execution plan is: \textbf{Stage 1}: Data Analyzer preprocesses input and extracts statistical features. \textbf{Stage 2}: Visual Anchor and Knowledge Retriever run in parallel, generating anchors and retrieving similar patterns. \textbf{Stage 3}: Numerologic Adapter fuses multimodal information. \textbf{Stage 4}: Task Executor produces final predictions. Different tasks follow adapted plans (e.g., classification skips Stage 3).
+
+\subsubsection{Visual Anchoring}
+
+\textbf{Motivation}: Time series analysis often benefits from visual inspection, where domain experts identify patterns, trends, and anomalies. We formalize this intuition by converting time series to images and using vision-language models (VLMs) to extract semantic and numerical priors.
+
+\textbf{Image Generation}: Given $\mathbf{X} \in \mathbb{R}^{T \times D}$, we create visualizations $\mathcal{I} = \{I_1, \ldots, I_B\}$ by plotting each feature as a line graph. Specifically, for batch sample $i$ and feature $j$, we generate image $I_{i,j}$ using Matplotlib with customizable styles.
+
+\textbf{Anchor Generation}: For forecasting tasks, we generate prediction anchors $\mathcal{A} = \{\mathbf{a}_1, \ldots, \mathbf{a}_H\}$ where each anchor $\mathbf{a}_h = (\mu_h, \sigma_h, \mathbf{u}_h, \mathbf{l}_h)$ consists of:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+    \item Mean estimate $\mu_h \in \mathbb{R}^D$: linear extrapolation from historical trend
+    \item Uncertainty $\sigma_h \in \mathbb{R}^D$: historical volatility
+    \item Upper/lower bounds $\mathbf{u}_h, \mathbf{l}_h \in \mathbb{R}^D$: confidence intervals at level $\alpha$ (e.g., 95\%)
+\end{itemize}
+
+The trend is estimated via linear regression: $\text{slope} = \frac{\sum_{t=1}^T (t - \bar{t})(x_t - \bar{x})}{\sum_{t=1}^T (t - \bar{t})^2}$, where $\bar{t} = \frac{T+1}{2}$ and $\bar{x} = \frac{1}{T}\sum_{t=1}^T x_t$. Anchors are then computed as:
+\begin{equation}
+\mu_h = x_T + h \cdot \text{slope}, \quad \mathbf{u}_h = \mu_h + z_\alpha \sigma, \quad \mathbf{l}_h = \mu_h - z_\alpha \sigma
+\end{equation}
+where $\sigma$ is the historical standard deviation and $z_\alpha$ is the z-score for confidence level $\alpha$.
+
+\textbf{Semantic Priors}: We extract semantic descriptions from time series characteristics:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+    \item \textit{Trend}: ``increasing''/``decreasing''/``stable'' based on slope magnitude
+    \item \textit{Volatility}: ``high''/``medium''/``low'' based on coefficient of variation
+    \item \textit{Periodicity}: ``strong''/``moderate''/``weak'' based on autocorrelation at lag-1
+\end{itemize}
+
+In future work, these priors can be enhanced by querying VLMs (e.g., GPT-4V, Qwen-VL) with time series images, enabling richer semantic understanding.
+
+\subsubsection{Numerologic Adapter}
+
+The Numerologic Adapter fuses information from three modalities: raw data features $\mathbf{f}_{\text{data}} \in \mathbb{R}^{B \times d}$, anchor features $\mathbf{f}_{\text{anchor}} \in \mathbb{R}^{B \times d}$, and semantic features $\mathbf{f}_{\text{semantic}} \in \mathbb{R}^{B \times d}$, where $B$ is batch size and $d$ is hidden dimension.
+
+\textbf{Feature Encoding}: (1) \textit{Data features}: statistical summaries (mean, std, min, max) and recent values. (2) \textit{Anchor features}: anchor statistics (mean trajectory, bound ranges, trend direction). (3) \textit{Semantic features}: rule-based encoding of priors (e.g., ``increasing'' $\rightarrow$ 1.0, ``stable'' $\rightarrow$ 0.0).
+
+\textbf{Multimodal Fusion}: We employ attention-based fusion:
+\begin{equation}
+\begin{aligned}
+&\alpha_i = \text{Softmax}(\text{MLP}(\mathbf{f}_i)), \quad i \in \{\text{data}, \text{anchor}, \text{semantic}\} \\
+&\mathbf{f}_{\text{fused}} = \alpha_{\text{data}} \mathbf{f}_{\text{data}} + \alpha_{\text{anchor}} \mathbf{f}_{\text{anchor}} + \alpha_{\text{semantic}} \mathbf{f}_{\text{semantic}}
+\end{aligned}
+\end{equation}
+
+Alternative fusion strategies include concatenation + MLP or weighted averaging.
+
+\textbf{Constraint Generation}: The fused features produce numerical constraints for downstream models:
+\begin{equation}
+\mathbf{c}_{\text{upper}} = \mathbf{\mu} + 2\mathbf{\sigma}, \quad \mathbf{c}_{\text{lower}} = \mathbf{\mu} - 2\mathbf{\sigma}
+\end{equation}
+where $\mathbf{\mu}, \mathbf{\sigma}$ are derived from data statistics. Task Executor predictions are clipped to $[\mathbf{c}_{\text{lower}}, \mathbf{c}_{\text{upper}}]$ to enforce anchor constraints.
+
+\subsubsection{Data Analyzer Agent}
+
+Performs preprocessing: (1) \textit{Missing value imputation} via forward filling. (2) \textit{Smoothing} using moving average with window size $w$. (3) \textit{Anomaly detection} via z-score thresholding. (4) \textit{Feature extraction}: statistical features (mean, std, skewness, kurtosis), trend (linear slope), and autocorrelation at multiple lags.
+
+\subsubsection{Knowledge Retriever Agent}
+
+Maintains a vector database of historical time series patterns. Given query $\mathbf{X}$, it extracts features $\mathbf{f}_q$ (statistics + trend + autocorrelation) and retrieves top-$k$ similar patterns via cosine similarity: $\text{sim}(\mathbf{f}_q, \mathbf{f}_i) = \frac{\mathbf{f}_q \cdot \mathbf{f}_i}{\|\mathbf{f}_q\| \|\mathbf{f}_i\|}$. Retrieved patterns provide few-shot learning signals and domain knowledge.
+
+\subsubsection{Task Executor Agent}
+
+Invokes specialized time series models from Time-Series-Library~\cite{wu2021autoformer,zhou2021informer,nie2022time}. For forecasting, we use DLinear~\cite{zeng2023transformers}, TimesNet~\cite{wu2023timesnet}, or PatchTST~\cite{nie2022time}. For classification/imputation/anomaly detection, we adapt these models with task-specific heads. The Task Executor applies constraints from Numerologic Adapter to ensure predictions align with anchors.
+
+\subsection{Training and Inference}
+
+\textbf{Training}: Individual agents with learnable parameters (Numerologic Adapter) are trained end-to-end using task-specific losses (MSE for forecasting, cross-entropy for classification). Task Executors can be pre-trained on large datasets or fine-tuned per task.
+
+\textbf{Inference}: At test time, the Manager Agent coordinates agents in parallel where possible (e.g., Visual Anchor and Knowledge Retriever in Stage 2), reducing latency compared to sequential LLM inference. The workflow completes in $O(\log N)$ stages for $N$ agents with parallelization, versus $O(N)$ for sequential models.

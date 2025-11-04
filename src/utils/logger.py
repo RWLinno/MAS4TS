@@ -8,15 +8,17 @@ import logging
 import logging.handlers
 import os
 import sys
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-def setup_logger(config: Dict[str, Any] = None) -> logging.Logger:
+def setup_logger(log_level: str = "INFO", config: Dict[str, Any] = None) -> logging.Logger:
     """
-    Setup centralized logging for OnCallAgent
+    Setup centralized logging for MAS4TS
     
     Args:
-        config: Logging configuration dictionary
+        log_level: Logging level (INFO, DEBUG, WARNING, ERROR)
+        config: Logging configuration dictionary (optional)
         
     Returns:
         Configured logger instance
@@ -24,7 +26,11 @@ def setup_logger(config: Dict[str, Any] = None) -> logging.Logger:
     config = config or {}
     
     # Get configuration values
-    log_level = config.get("level", "INFO").upper()
+    if isinstance(log_level, str):
+        log_level = log_level.upper()
+    else:
+        log_level = config.get("level", "INFO").upper()
+    
     log_format = config.get("format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     log_dir = config.get("log_dir", "logs")
     max_file_size = config.get("max_file_size_mb", 10) * 1024 * 1024  # Convert to bytes
@@ -52,7 +58,7 @@ def setup_logger(config: Dict[str, Any] = None) -> logging.Logger:
     
     # File handler with rotation
     file_handler = logging.handlers.RotatingFileHandler(
-        log_path / "oncall_agent.log",
+        log_path / "mas4ts.log",
         maxBytes=max_file_size,
         backupCount=backup_count,
         encoding='utf-8'
@@ -63,7 +69,7 @@ def setup_logger(config: Dict[str, Any] = None) -> logging.Logger:
     
     # Error file handler
     error_handler = logging.handlers.RotatingFileHandler(
-        log_path / "oncall_agent_errors.log",
+        log_path / "mas4ts_errors.log",
         maxBytes=max_file_size,
         backupCount=backup_count,
         encoding='utf-8'
@@ -90,7 +96,7 @@ def setup_logger(config: Dict[str, Any] = None) -> logging.Logger:
         perf_logger.addHandler(perf_handler)
         perf_logger.setLevel(logging.INFO)
     
-    logger = logging.getLogger("oncall_agent")
+    logger = logging.getLogger("mas4ts")
     logger.info("✓ Logging system initialized")
     logger.info(f"Log level: {log_level}")
     logger.info(f"Log directory: {log_path.absolute()}")

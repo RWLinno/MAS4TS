@@ -1,0 +1,17 @@
+\section{Related Work}
+
+\subsection{Deep Learning for Time Series}
+
+Deep learning has revolutionized time series analysis through specialized architectures. \textbf{Recurrent models}~\cite{medsker2001recurrent,hochreiter1997long} capture temporal dependencies but struggle with long sequences. \textbf{Convolutional models}~\cite{bai2018empirical,wu2023timesnet} extract local patterns efficiently. \textbf{Transformer-based models}~\cite{zhou2021informer,wu2021autoformer,liu2022pyraformer,zhou2022fedformer,nie2022time} have become dominant, using mechanisms like auto-correlation~\cite{wu2021autoformer}, frequency decomposition~\cite{zhou2022fedformer}, and patching~\cite{nie2022time} to handle long sequences. Recent linear models~\cite{zeng2023transformers} surprisingly match or exceed Transformers on forecasting benchmarks, highlighting the importance of model architecture choice.
+
+\subsection{Foundation Models for Time Series}
+
+Inspired by the success of large language models, recent work explores \textbf{foundation models for time series}~\cite{liang2024foundation}. \textbf{LLM-based approaches}~\cite{jin2023time,liu2024unitime,zhou2023one} align time series with text embeddings, leveraging pre-trained language models for zero-shot generalization. However, these methods suffer from modality gaps and computational inefficiency. \textbf{Vision-based approaches}~\cite{chen2024visiontsvisualmaskedautoencoders,wang2024timemixer++} convert time series to images (e.g., GAF, recurrence plots) and use pre-trained vision models, but lack semantic context. \textbf{Multimodal approaches}~\cite{radford2021learning} attempt to unify text, vision, and time series, but focus primarily on forecasting and do not address general time series analysis.
+
+\subsection{Multi-Agent Systems}
+
+Multi-agent systems have demonstrated remarkable success in complex reasoning~\cite{wu2023autogen,hong2023metagpt,qian2023communicative} and code generation~\cite{hong2023metagpt}. In AutoGPT~\cite{wu2023autogen}, agents collaborate through message passing to solve tasks beyond single-model capabilities. MetaGPT~\cite{hong2023metagpt} introduces role-based agents (e.g., architect, engineer) for software development. However, \textbf{multi-agent systems remain unexplored for time series analysis}, with no prior work addressing visual anchoring, numerical reasoning, or task generalization across classification, forecasting, imputation, and anomaly detection.
+
+\subsection{Differences from Prior Work}
+
+MAS4TS differs fundamentally from prior work in three aspects: \textbf{(1) Multi-agent architecture}: Unlike monolithic LLMs~\cite{jin2023time} or vision models~\cite{chen2024visiontsvisualmaskedautoencoders}, we decompose time series analysis into specialized agents with parallel execution. \textbf{(2) Visual anchoring}: We introduce a novel mechanism where agents generate prediction anchors from time series visualizations, providing both numerical constraints and semantic priors. \textbf{(3) Task generalization}: MAS4TS is the first system to achieve state-of-the-art performance across four major time series tasks (forecasting, classification, imputation, anomaly detection) within a unified framework.
