@@ -42,7 +42,10 @@ class VisualAnchorAgent(BaseAgentTS):
         self.use_vlm = config.get('use_vlm', self.use_vlm)
         self.use_eas = config.get('use_eas', self.use_eas)
         self.vlm_model_name = config.get('vlm_model', self.vlm_model_name)
-        self.vis_save_dir = config.get('vis_save_dir', './visualizations/visual_anchors/')
+        self.vis_save_dir = config.get('vis_save_dir', self.anchor_save_dir)
+        
+        # Anchor本地存储配置（新增）
+        self.enable_anchor_save = config.get('save_anchors', self.enable_anchor_save)
         
         # VLM配置
         self.vlm_model = None
@@ -56,8 +59,11 @@ class VisualAnchorAgent(BaseAgentTS):
             else:
                 self._init_local_vlm()
         
-        # 创建可视化目录
+        # 创建可视化和anchor存储目录
         os.makedirs(self.vis_save_dir, exist_ok=True)
+        if self.enable_anchor_save:
+            os.makedirs(self.anchor_save_dir, exist_ok=True)
+            self.log_info(f"Anchor存储已启用，保存路径: {self.anchor_save_dir}")
     
     def _load_config_from_file(self):
         """从config.json加载visual_anchor专属配置"""
@@ -78,6 +84,17 @@ class VisualAnchorAgent(BaseAgentTS):
                     self.anchor_strategy = agent_config.get('anchor_strategy', 'confidence_interval')
                     self.confidence_level = agent_config.get('confidence_level', 0.95)
                     
+                    # anchor_storage配置（新增）
+                    storage_config = agent_config.get('anchor_storage', {})
+                    self.enable_anchor_save = storage_config.get('enable_save', True)
+                    self.anchor_save_dir = storage_config.get('save_dir', './visualizations/visual_anchors/')
+                    self.anchor_save_format = storage_config.get('save_format', 'json')
+                    self.update_frequency = storage_config.get('update_frequency', 'every_batch')
+                    self.max_saved_batches = storage_config.get('max_saved_batches', 100)
+                    self.cleanup_old = storage_config.get('cleanup_old', True)
+                    self.save_anchor_images = storage_config.get('save_images', True)
+                    self.anchor_image_format = storage_config.get('image_format', 'png')
+                    
                     # visualization配置
                     vis_config = agent_config.get('visualization', {})
                     self.fig_size = tuple(vis_config.get('fig_size', [12, 6]))
@@ -90,41 +107,39 @@ class VisualAnchorAgent(BaseAgentTS):
                     self.fill_alpha = vis_config.get('fill_alpha', 0.3)
                     self.color_scheme = vis_config.get('color_scheme', 'default')
                     
-                    self.log_info(f"Loaded config from file: use_vlm={self.use_vlm}, use_eas={self.use_eas}")
+                    self.log_info(f"Loaded config: use_vlm={self.use_vlm}, anchor_save={self.enable_anchor_save}")
             else:
-                # 默认值
-                self.use_vlm = False
-                self.use_eas = False
-                self.vlm_model_name = 'Qwen/Qwen-VL-Chat'
-                self.anchor_strategy = 'confidence_interval'
-                self.confidence_level = 0.95
-                self.fig_size = (12, 6)
-                self.dpi = 150
-                self.style = 'default'
-                self.remove_plot_text = True
-                self.show_grid = True
-                self.show_legend = False
-                self.line_width = 2
-                self.fill_alpha = 0.3
-                self.color_scheme = 'default'
+                self._set_default_config()
                 
         except Exception as e:
             self.log_error(f"Failed to load config: {e}, using defaults")
-            # 使用默认值
-            self.use_vlm = False
-            self.use_eas = False
-            self.vlm_model_name = 'Qwen/Qwen-VL-Chat'
-            self.anchor_strategy = 'confidence_interval'
-            self.confidence_level = 0.95
-            self.fig_size = (12, 6)
-            self.dpi = 150
-            self.style = 'default'
-            self.remove_plot_text = True
-            self.show_grid = True
-            self.show_legend = False
-            self.line_width = 2
-            self.fill_alpha = 0.3
-            self.color_scheme = 'default'
+            self._set_default_config()
+    
+    def _set_default_config(self):
+        self.use_vlm = False
+        self.use_eas = False
+        self.vlm_model_name = 'Qwen/Qwen-VL-Chat'
+        self.anchor_strategy = 'confidence_interval'
+        self.confidence_level = 0.95
+        
+        self.enable_anchor_save = True
+        self.anchor_save_dir = './visualizations/visual_anchors/'
+        self.anchor_save_format = 'json'
+        self.update_frequency = 'every_batch'
+        self.max_saved_batches = 100
+        self.cleanup_old = True
+        self.save_anchor_images = True
+        self.anchor_image_format = 'png'
+        
+        self.fig_size = (12, 6)
+        self.dpi = 150
+        self.style = 'default'
+        self.remove_plot_text = True
+        self.show_grid = True
+        self.show_legend = False
+        self.line_width = 2
+        self.fill_alpha = 0.3
+        self.color_scheme = 'default'
         
     async def process(self, input_data: Dict[str, Any]) -> AgentOutput:
         """
@@ -984,24 +999,143 @@ Output concise JSON with observations."""
             return 'stable'
     
     def _save_anchor_visualization(self, original_plot: str, anchors: Dict, batch_idx: int) -> str:
-        """保存带锚点标注的可视化图"""
+        """
+        保存锚点可视化 - 支持本地存储和定期更新
+        
+        Args:
+            original_plot: 原始plot路径
+            anchors: 锚点数据
+            batch_idx: 批次索引
+            
+        Returns:
+            保存的图片路径
+        """
+        if not self.enable_anchor_save:
+            self.log_info("Anchor存储未启用，跳过保存")
+            return ""
+        
         try:
-            save_path = Path(self.vis_save_dir) / f'batch_{batch_idx}_anchors.png'
+            save_dir = Path(self.anchor_save_dir)
+            save_dir.mkdir(parents=True, exist_ok=True)
             
-            # 重新绘制并添加锚点标注
-            # 这里可以加载原图并添加标注，简化处理直接保存anchors信息
-            anchors_json_path = Path(self.vis_save_dir) / f'batch_{batch_idx}_anchors.json'
-            with open(anchors_json_path, 'w') as f:
-                # 将tensor转为list以便JSON序列化（递归处理）
+            # 1. 保存anchor数据（JSON格式）
+            if self.anchor_save_format == 'json':
+                anchors_json_path = save_dir / f'batch_{batch_idx}_anchors.json'
                 serializable_anchors = self._make_json_serializable(anchors)
-                json.dump(serializable_anchors, f, indent=2)
+                
+                # 添加元数据
+                anchor_data = {
+                    'batch_idx': batch_idx,
+                    'timestamp': self._get_timestamp(),
+                    'anchors': serializable_anchors,
+                    'config': {
+                        'strategy': self.anchor_strategy,
+                        'confidence_level': self.confidence_level
+                    }
+                }
+                
+                with open(anchors_json_path, 'w') as f:
+                    json.dump(anchor_data, f, indent=2)
             
-            self.log_info(f"Anchors saved to: {anchors_json_path}")
-            return str(save_path)
+                self.log_info(f"Anchors保存至: {anchors_json_path}")
+            
+            # 2. 保存可视化图片（可选）
+            image_path = ""
+            if self.save_anchor_images:
+                image_path = save_dir / f'batch_{batch_idx}_anchors.{self.anchor_image_format}'
+                self._generate_anchor_plot(anchors, original_plot, str(image_path))
+                self.log_info(f"Anchor可视化保存至: {image_path}")
+            
+            # 3. 定期清理旧文件
+            if self.cleanup_old:
+                self._cleanup_old_anchors(save_dir, batch_idx)
+            
+            return str(image_path) if image_path else str(save_dir / f'batch_{batch_idx}_anchors.json')
             
         except Exception as e:
             self.log_error(f"Failed to save anchor visualization: {e}")
+            import traceback
+            traceback.print_exc()
             return ""
+    
+    def _get_timestamp(self) -> str:
+        """获取当前时间戳"""
+        from datetime import datetime
+        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    def _generate_anchor_plot(self, anchors: Dict, original_plot: str, save_path: str):
+        """生成带锚点标注的可视化图"""
+        try:
+            # 创建图形
+            fig, ax = plt.subplots(figsize=self.fig_size)
+            
+            # 如果有原始plot，加载并显示
+            if original_plot and os.path.exists(original_plot):
+                from PIL import Image
+                img = Image.open(original_plot)
+                ax.imshow(img)
+                ax.axis('off')
+            else:
+                # 绘制锚点预测
+                if anchors.get('type') == 'confidence_interval':
+                    predictions = anchors.get('predictions', {})
+                    point_forecast = predictions.get('point_forecast', None)
+                    
+                    if isinstance(point_forecast, list) and len(point_forecast) > 0:
+                        # 绘制第一个batch的第一个特征
+                        forecast = point_forecast[0]  # 假设是list格式
+                        if isinstance(forecast, list) and len(forecast) > 0:
+                            time_steps = list(range(len(forecast)))
+                            values = [f[0] if isinstance(f, list) else f for f in forecast]
+                            
+                            ax.plot(time_steps, values, 'b-', linewidth=2, label='Point Forecast')
+                            
+                            # 绘制置信区间
+                            upper = predictions.get('upper_bound', None)
+                            lower = predictions.get('lower_bound', None)
+                            if upper and lower and isinstance(upper, list) and isinstance(lower, list):
+                                upper_vals = [u[0][0] if isinstance(u, list) else u for u in upper]
+                                lower_vals = [l[0][0] if isinstance(l, list) else l for l in lower]
+                                ax.fill_between(time_steps, lower_vals, upper_vals, alpha=0.3)
+                            
+                            ax.set_xlabel('Time Steps')
+                            ax.set_ylabel('Value')
+                            ax.set_title('Visual Anchors')
+                            ax.legend()
+                            ax.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
+            plt.close(fig)
+            
+        except Exception as e:
+            self.log_error(f"Failed to generate anchor plot: {e}")
+    
+    def _cleanup_old_anchors(self, save_dir: Path, current_batch: int):
+        """清理旧的anchor文件"""
+        try:
+            if current_batch <= self.max_saved_batches:
+                return
+            
+            # 删除batch索引小于 current_batch - max_saved_batches 的文件
+            threshold_batch = current_batch - self.max_saved_batches
+            
+            for file_path in save_dir.glob('batch_*_anchors.*'):
+                try:
+                    # 提取batch索引
+                    filename = file_path.stem
+                    batch_num = int(filename.split('_')[1])
+                    
+                    if batch_num < threshold_batch:
+                        file_path.unlink()
+                        self.log_info(f"清理旧文件: {file_path}")
+                        
+                except (ValueError, IndexError):
+                    # 文件名格式不匹配，跳过
+                    continue
+                    
+        except Exception as e:
+            self.log_error(f"Failed to cleanup old anchors: {e}")
     
     def _make_json_serializable(self, obj):
         """递归将对象转换为JSON可序列化格式"""

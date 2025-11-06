@@ -14,38 +14,32 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BatchData:
-    """批数据结构"""
-    seq_x: torch.Tensor  # 输入序列 [batch, seq_len, features]
-    seq_y: Optional[torch.Tensor] = None  # 目标序列 [batch, pred_len, features]
-    seq_x_mark: Optional[torch.Tensor] = None  # 时间戳特征
+    seq_x: torch.Tensor
+    seq_y: Optional[torch.Tensor] = None
+    seq_x_mark: Optional[torch.Tensor] = None
     seq_y_mark: Optional[torch.Tensor] = None
     metadata: Optional[Dict[str, Any]] = None
 
 
 class BatchProcessor:
-    """批处理器：处理单个batch的数据"""
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.device = config.get('device', 'cpu')
         self.task_name = config.get('task_name', 'forecasting')
         
-        # 数据配置
         self.seq_len = config.get('seq_len', 96)
         self.pred_len = config.get('pred_len', 96)
         self.label_len = config.get('label_len', 48)
         
-        # 从config.json加载data_processing配置
         self._load_data_processing_config()
         
-        # 允许传入的config覆盖
         self.use_norm = config.get('use_norm', self.use_norm)
         self.scaler = None
         
         logger.info(f"BatchProcessor initialized for task: {self.task_name}")
     
     def _load_data_processing_config(self):
-        """从config.json的data_analyzer配置中加载data_processing"""
         try:
             import json
             from pathlib import Path
@@ -63,7 +57,6 @@ class BatchProcessor:
                     self.clip_max = data_proc.get('clip_max', 1e6)
                     self.handle_missing = data_proc.get('handle_missing', True)
             else:
-                # 默认值
                 self.use_norm = True
                 self.clip_predictions = False
                 self.clip_min = -1e6
@@ -79,22 +72,14 @@ class BatchProcessor:
             self.handle_missing = True
     
     def preprocess(self, batch_data: BatchData) -> BatchData:
-        """
-        预处理批数据
-        - 归一化
-        - 缺失值处理
-        - 特征工程
-        """
         try:
             seq_x = batch_data.seq_x.to(self.device)
             
-            # 归一化
             if self.use_norm:
                 seq_x, scaler_params = self._normalize(seq_x)
                 batch_data.metadata = batch_data.metadata or {}
                 batch_data.metadata['scaler_params'] = scaler_params
-            
-            # 处理缺失值
+
             seq_x = self._handle_missing_values(seq_x)
             
             batch_data.seq_x = seq_x
@@ -112,13 +97,7 @@ class BatchProcessor:
             raise
     
     def postprocess(self, predictions: torch.Tensor, metadata: Dict[str, Any]) -> torch.Tensor:
-        """
-        后处理预测结果
-        - 逆归一化
-        - 裁剪异常值
-        """
         try:
-            # 逆归一化
             if self.use_norm and 'scaler_params' in metadata:
                 predictions = self._inverse_normalize(predictions, metadata['scaler_params'])
             
@@ -136,11 +115,10 @@ class BatchProcessor:
     
     def _normalize(self, data: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Z-score归一化"""
-        # 计算均值和标准差 (在时间维度上)
         mean = data.mean(dim=1, keepdim=True)
         std = data.std(dim=1, keepdim=True)
-        std = torch.where(std == 0, torch.ones_like(std), std)  # 避免除零
-        
+        std = torch.where(std == 0, torch.ones_like(std), std)
+
         normalized = (data - mean) / std
         
         scaler_params = {
@@ -151,19 +129,16 @@ class BatchProcessor:
         return normalized, scaler_params
     
     def _apply_normalization(self, data: torch.Tensor, scaler_params: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """应用已有的归一化参数"""
         mean = scaler_params['mean']
         std = scaler_params['std']
         return (data - mean) / std
     
     def _inverse_normalize(self, data: torch.Tensor, scaler_params: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """逆归一化"""
         mean = scaler_params['mean']
         std = scaler_params['std']
         return data * std + mean
     
     def _handle_missing_values(self, data: torch.Tensor) -> torch.Tensor:
-        """处理缺失值（NaN）"""
         if torch.isnan(data).any():
             logger.warning("Detected NaN values in data, filling with zeros")
             data = torch.nan_to_num(data, nan=0.0)

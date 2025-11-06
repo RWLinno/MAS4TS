@@ -595,3 +595,103 @@ class TaskExecutorAgent(BaseAgentTS):
         
         return predictions
 
+    def process_output(self, result, batch_data, x_enc, task_name):
+        """
+        处理Manager的输出结果 - TaskExecutor是唯一根据task_name处理输出的agent
+        
+        Args:
+            result: Manager返回的结果
+            batch_data: 批次数据（包含metadata用于后处理）
+            x_enc: 原始输入数据（用于fallback）
+            task_name: 任务名称
+            
+        Returns:
+            处理后的最终输出
+        """
+        from src.base.processor import BatchProcessor
+        
+        # 初始化processor用于后处理
+        if not hasattr(self, 'output_processor'):
+            self.output_processor = BatchProcessor(self.config)
+        
+        # 根据task_name处理不同的输出
+        if task_name in ['long_term_forecast', 'short_term_forecast']:
+            return self._process_forecasting_output(result, batch_data, x_enc)
+        
+        elif task_name == 'classification':
+            return self._process_classification_output(result, batch_data, x_enc)
+        
+        elif task_name == 'imputation':
+            return self._process_imputation_output(result, batch_data, x_enc)
+        
+        elif task_name == 'anomaly_detection':
+            return self._process_anomaly_output(result, batch_data, x_enc)
+        
+        else:
+            self.log_error(f"Unknown task_name: {task_name}, returning input")
+            return x_enc
+    
+    def _process_forecasting_output(self, result, batch_data, x_enc):
+        """处理预测任务的输出"""
+        if isinstance(result, dict):
+            result = result.get('final_predictions', result.get('predictions', None))
+        
+        if isinstance(result, torch.Tensor):
+            # 后处理：逆归一化
+            result = self.output_processor.postprocess(result, batch_data.metadata or {})
+            # 返回预测长度的结果
+            return result[:, -self.pred_len:, :]
+        else:
+            self.log_error("Forecasting result is not a tensor, using fallback")
+            return self._fallback_forecast(x_enc)
+    
+    def _process_classification_output(self, result, batch_data, x_enc):
+        """处理分类任务的输出"""
+        if isinstance(result, dict):
+            result = result.get('logits', result.get('final_predictions', None))
+        
+        if isinstance(result, torch.Tensor):
+            # 确保返回的维度正确 [batch, num_classes]
+            if result.dim() == 1:
+                result = result.unsqueeze(0)
+            
+            # 确保num_classes维度正确
+            expected_classes = self.config.get('num_class', 2)
+            if result.size(-1) != expected_classes:
+                batch_size = result.size(0)
+                result_fixed = torch.zeros(batch_size, expected_classes, 
+                                          device=result.device, dtype=result.dtype)
+                min_classes = min(result.size(-1), expected_classes)
+                result_fixed[:, :min_classes] = result[:, :min_classes]
+                result = result_fixed
+            
+            return result
+        else:
+            self.log_error("Classification result is not a tensor, using fallback")
+            return self._fallback_classification(x_enc)
+    
+    def _process_imputation_output(self, result, batch_data, x_enc):
+        """处理填补任务的输出"""
+        if isinstance(result, dict):
+            result = result.get('imputed_data', result.get('final_predictions', None))
+        
+        return result if isinstance(result, torch.Tensor) else x_enc
+    
+    def _process_anomaly_output(self, result, batch_data, x_enc):
+        """处理异常检测任务的输出"""
+        if isinstance(result, dict):
+            result = result.get('scores', result.get('final_predictions', None))
+        
+        return result if isinstance(result, torch.Tensor) else x_enc
+    
+    def _fallback_forecast(self, x_enc):
+        """预测任务的fallback"""
+        last_value = x_enc[:, -1:, :]
+        return last_value.repeat(1, self.pred_len, 1)
+    
+    def _fallback_classification(self, x_enc):
+        """分类任务的fallback"""
+        batch_size = x_enc.size(0)
+        num_classes = self.config.get('num_class', 2)
+        return torch.zeros(batch_size, num_classes, device=x_enc.device, dtype=x_enc.dtype)
+

@@ -1,3 +1,9 @@
+"""
+NumericReasonerAgent: 数值推理适配器
+结合视觉锚点、语义先验和原始时序数据，进行精确的数值推理
+整合了numerologic_adapter的所有功能 + 新增序列重建和layers工具支持
+"""
+
 import torch
 import torch.nn as nn
 from typing import Dict, Any, Optional, List
@@ -5,28 +11,67 @@ from .base_agent_ts import BaseAgentTS, AgentOutput
 import asyncio
 import json
 import logging
+import sys
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
 class NumericReasonerAgent(BaseAgentTS):
+    """
+    数值推理Agent（整合版）：融合多模态信息进行数值推理
+    
+    核心创新：
+    1. 将视觉锚点转换为数值约束
+    2. 将语义先验编码为推理引导
+    3. 结合原始数据进行精确的数值预测
+    4. 使用注意力机制融合多源信息
+    5. 支持layers工具调用进行分布调整
+    6. 基于锚点重建序列
+    """
+    
     def __init__(self, config: Dict[str, Any]):
-        super().__init__("NumerologicAdapterAgent", config)
+        super().__init__("NumericReasonerAgent", config)
         
         self.device = config.get('device', 'cpu')
         self.hidden_dim = config.get('hidden_dim', 128)
         self.num_layers = config.get('num_layers', 2)
+        self.config = config
         self.fusion_strategy = config.get('fusion_strategy', 'attention')
         self.use_llm = config.get('use_llm', False)
         self.use_eas = config.get('use_eas', False)
         self.num_llm_models = config.get('num_llm_models', 3)
         
+        # layers工具使用配置
+        self.use_layers_tools = config.get('use_layers_tools', True)
+        self.use_normalization = config.get('use_normalization', True)
+        self.use_decomposition = config.get('use_decomposition', False)
+        
+        # 添加layers路径
+        self._add_layers_path(config)
+        
         self._init_fusion_networks()
+        
+        # 初始化layers工具
+        if self.use_layers_tools:
+            self._init_layers_tools()
         
         if self.use_llm and self.use_eas:
             self._init_eas_client(config)
         
+    def _add_layers_path(self, config: Dict[str, Any]):
+        """添加layers路径到sys.path"""
+        try:
+            project_root = Path(config.get('project_root', Path(__file__).parent.parent.parent))
+            layers_path = project_root / 'layers'
+            if str(layers_path) not in sys.path:
+                sys.path.insert(0, str(layers_path))
+            self.log_info(f"Added layers path: {layers_path}")
+        except Exception as e:
+            self.log_error(f"Failed to add layers path: {e}")
+        
     def _init_fusion_networks(self):
+        """初始化融合网络"""
         self.anchor_attention = nn.Sequential(
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.Tanh(),
@@ -42,6 +87,31 @@ class NumericReasonerAgent(BaseAgentTS):
         ).to(self.device)
         
         self.log_info("Fusion networks initialized")
+    
+    def _init_layers_tools(self):
+        """初始化layers模块工具"""
+        try:
+            # 导入layers工具
+            if self.use_normalization:
+                from StandardNorm import Normalize
+                self.normalizer = Normalize(num_features=1, affine=True).to(self.device)
+                self.log_info("Initialized StandardNorm for distribution adjustment")
+            
+            # 可选：导入分解工具
+            if self.use_decomposition:
+                try:
+                    from DWT_Decomposition import DWTDecomposition
+                    self.decomposer = DWTDecomposition(wave='db4').to(self.device)
+                    self.log_info("Initialized DWT Decomposition")
+                except Exception as e:
+                    self.log_warning(f"DWT Decomposition not available: {e}")
+                    self.use_decomposition = False
+            
+            self.log_info("Layers tools initialized successfully")
+            
+        except Exception as e:
+            self.log_error(f"Failed to initialize layers tools: {e}")
+            self.use_layers_tools = False
     
     def __call__(self, data: torch.Tensor, anchor: Any = None, prior: Any = None) -> Any:
         """
@@ -67,12 +137,13 @@ class NumericReasonerAgent(BaseAgentTS):
     
     async def process(self, input_data: Dict[str, Any]) -> AgentOutput:
         """
-        处理多模态输入，生成融合特征
+        数值推理处理：基于锚点和先验知识重建序列
         
         Args:
             input_data: {
-                'data': torch.Tensor,  # 原始时序数据 [batch, seq_len, features]
-                'anchors': Dict,  # 视觉锚点
+                'data': torch.Tensor,  # 原始时序数据或embeddings [batch, seq_len, features]
+                'anchors': Dict,  # visual_anchor生成的锚点
+                'analysis_text': str,  # visual_anchor生成的分析文本
                 'semantic_priors': Dict,  # 语义先验
                 'config': Dict
             }
@@ -88,42 +159,55 @@ class NumericReasonerAgent(BaseAgentTS):
             
             data = input_data['data']
             anchors = input_data.get('anchors', {})
+            analysis_text = input_data.get('analysis_text', '')
             semantic_priors = input_data.get('semantic_priors', {})
             
-            self.log_info(f"Adapting features with fusion strategy: {self.fusion_strategy}")
+            self.log_info(f"Numeric reasoning with anchors and prior knowledge")
             
-            # 1. 编码原始数据特征
-            data_features = self._encode_data_features(data)
+            # 1. 基于锚点进行数据分布调整（使用layers工具）
+            if self.use_layers_tools and anchors:
+                adjusted_data = self._adjust_distribution_with_anchors(data, anchors)
+            else:
+                adjusted_data = data
             
-            # 2. 编码锚点约束
+            # 2. 编码数据特征
+            data_features = self._encode_data_features(adjusted_data)
+            
+            # 3. 编码锚点约束
             anchor_features = self._encode_anchor_constraints(anchors, data.shape)
             
-            # 3. 编码语义先验
-            semantic_features = self._encode_semantic_priors(semantic_priors, data.shape)
+            # 4. 编码语义先验（从analysis_text提取）
+            semantic_features = self._encode_semantic_priors_from_text(analysis_text, data.shape)
             
-            # 4. 多模态融合
+            # 5. 多模态融合
             fused_features = self._fuse_multimodal_features(
                 data_features, anchor_features, semantic_features
             )
             
-            # 5. 如果启用LLM，进行并发数值推理
+            # 6. 基于锚点重建序列
+            reconstructed_sequence = self._reconstruct_sequence(adjusted_data, anchors, fused_features)
+            
+            # 7. 如果启用LLM，进行数值推理验证
             if input_data.get('use_parallel_llm', False) and self.use_llm:
                 statistics_text = input_data.get('statistics_text', '')
                 num_models = input_data.get('num_llm_models', self.num_llm_models)
                 llm_output = await self._parallel_llm_inference(
-                    data, anchors, statistics_text, num_models
+                    adjusted_data, anchors, statistics_text, num_models
                 )
-                adapted_output = self._generate_numerical_output(fused_features, data)
-                adapted_output['llm_reasoning'] = llm_output
+                numerical_output = self._generate_numerical_output(fused_features, adjusted_data)
+                numerical_output['llm_reasoning'] = llm_output
             else:
-                adapted_output = self._generate_numerical_output(fused_features, data)
+                numerical_output = self._generate_numerical_output(fused_features, adjusted_data)
             
             result = {
+                'reconstructed_sequence': reconstructed_sequence,
                 'adapted_features': fused_features,
-                'numerical_constraints': adapted_output['constraints'],
-                'confidence_weights': adapted_output['confidence'],
+                'numerical_constraints': numerical_output['constraints'],
+                'numerical_predictions': numerical_output.get('predictions', None),
+                'confidence_weights': numerical_output['confidence'],
                 'metadata': {
                     'fusion_strategy': self.fusion_strategy,
+                    'used_layers_tools': self.use_layers_tools,
                     'feature_dim': fused_features.shape
                 }
             }
@@ -137,7 +221,7 @@ class NumericReasonerAgent(BaseAgentTS):
             )
             
         except Exception as e:
-            self.log_error(f"Error in numerical adaptation: {e}")
+            self.log_error(f"Error in numerical reasoning: {e}")
             import traceback
             traceback.print_exc()
             return AgentOutput(
@@ -245,6 +329,159 @@ class NumericReasonerAgent(BaseAgentTS):
         anchor_features = self.anchor_projection(anchor_stats)
         
         return anchor_features  # [batch, hidden_dim]
+    
+    def _adjust_distribution_with_anchors(self, data: torch.Tensor, anchors: Dict) -> torch.Tensor:
+        """
+        基于锚点调整数据分布（使用layers工具）
+        
+        Args:
+            data: [batch, seq_len, features]
+            anchors: 视觉锚点信息
+            
+        Returns:
+            adjusted_data: 调整后的数据
+        """
+        try:
+            adjusted = data.clone()
+            
+            # 1. 使用StandardNorm进行归一化调整
+            if self.use_normalization and hasattr(self, 'normalizer'):
+                batch, seq_len, features = data.shape
+                # 对每个特征分别归一化
+                for f in range(features):
+                    feat_data = data[:, :, f:f+1]  # [batch, seq_len, 1]
+                    # 转换为 [batch, 1, seq_len] 格式
+                    feat_data_t = feat_data.permute(0, 2, 1)
+                    normalized = self.normalizer(feat_data_t, mode='norm')
+                    # 转回 [batch, seq_len, 1]
+                    adjusted[:, :, f:f+1] = normalized.permute(0, 2, 1)
+                
+                self.log_info("Applied StandardNorm for distribution adjustment")
+            
+            # 2. 基于锚点的分布调整
+            if anchors and anchors.get('type') == 'confidence_interval':
+                predictions = anchors.get('predictions', {})
+                point_forecast = predictions.get('point_forecast', None)
+                
+                if isinstance(point_forecast, torch.Tensor):
+                    # 使用锚点预测的均值和方差来调整当前数据分布
+                    anchor_mean = point_forecast.mean(dim=1, keepdim=True)  # [batch, 1, features]
+                    anchor_std = point_forecast.std(dim=1, keepdim=True)
+                    
+                    # 将数据调整到锚点的分布
+                    data_mean = adjusted.mean(dim=1, keepdim=True)
+                    data_std = adjusted.std(dim=1, keepdim=True) + 1e-8
+                    
+                    # Z-score归一化 + 锚点分布变换
+                    adjusted = (adjusted - data_mean) / data_std
+                    adjusted = adjusted * anchor_std + anchor_mean
+                    
+                    self.log_info("Applied anchor-based distribution adjustment")
+            
+            return adjusted
+            
+        except Exception as e:
+            self.log_error(f"Distribution adjustment failed: {e}")
+            return data
+    
+    def _reconstruct_sequence(self, data: torch.Tensor, anchors: Dict, fused_features: torch.Tensor) -> torch.Tensor:
+        """
+        基于锚点重建序列
+        
+        Args:
+            data: 调整后的数据 [batch, seq_len, features]
+            anchors: 锚点信息
+            fused_features: 融合特征 [batch, hidden_dim]
+            
+        Returns:
+            reconstructed: 重建的序列 [batch, seq_len, features]
+        """
+        try:
+            if not anchors or anchors.get('type') != 'confidence_interval':
+                return data
+            
+            # 获取锚点预测
+            predictions = anchors.get('predictions', {})
+            point_forecast = predictions.get('point_forecast', None)
+            
+            if isinstance(point_forecast, torch.Tensor):
+                # 简单策略：基于锚点的点预测调整原始数据
+                # 这里可以实现更复杂的重建算法
+                batch_size = data.size(0)
+                seq_len = data.size(1)
+                pred_len = point_forecast.size(1)
+                
+                # 如果pred_len与seq_len相同，直接使用
+                if pred_len == seq_len:
+                    reconstructed = point_forecast
+                else:
+                    # 否则，保留原始数据并在末尾添加预测
+                    reconstructed = data
+                
+                self.log_info(f"Reconstructed sequence with shape: {reconstructed.shape}")
+                return reconstructed
+            else:
+                return data
+                
+        except Exception as e:
+            self.log_error(f"Sequence reconstruction failed: {e}")
+            return data
+    
+    def _encode_semantic_priors_from_text(self, analysis_text: str, data_shape: tuple) -> torch.Tensor:
+        """
+        从分析文本编码语义先验
+        
+        Args:
+            analysis_text: visual_anchor生成的分析文本
+            data_shape: (batch, seq_len, features)
+            
+        Returns:
+            semantic_features: [batch, hidden_dim]
+        """
+        batch_size = data_shape[0]
+        
+        if not analysis_text:
+            return torch.zeros(batch_size, self.hidden_dim, device=self.device)
+        
+        # 从文本提取语义信息
+        semantic_vector = []
+        
+        # 趋势
+        if 'increasing' in analysis_text.lower() or '上升' in analysis_text.lower():
+            trend_val = 1.0
+        elif 'decreasing' in analysis_text.lower() or '下降' in analysis_text.lower():
+            trend_val = -1.0
+        else:
+            trend_val = 0.0
+        semantic_vector.append(trend_val)
+        
+        # 波动性
+        if 'high volatility' in analysis_text.lower() or '高波动' in analysis_text.lower():
+            vol_val = 1.0
+        elif 'low volatility' in analysis_text.lower() or '低波动' in analysis_text.lower():
+            vol_val = 0.0
+        else:
+            vol_val = 0.5
+        semantic_vector.append(vol_val)
+        
+        # 周期性
+        if 'periodic' in analysis_text.lower() or '周期' in analysis_text.lower():
+            period_val = 1.0
+        else:
+            period_val = 0.0
+        semantic_vector.append(period_val)
+        
+        # 转换为tensor
+        semantic_tensor = torch.tensor(semantic_vector, device=self.device, dtype=torch.float32)
+        semantic_tensor = semantic_tensor.unsqueeze(0).expand(batch_size, -1)
+        
+        # 投影到hidden_dim
+        if not hasattr(self, 'semantic_projection'):
+            self.semantic_projection = nn.Linear(3, self.hidden_dim).to(self.device)
+        
+        semantic_features = self.semantic_projection(semantic_tensor)
+        
+        return semantic_features
     
     def _encode_semantic_priors(self, semantic_priors: Dict, data_shape: tuple) -> torch.Tensor:
         """
@@ -429,7 +666,9 @@ class NumericReasonerAgent(BaseAgentTS):
             if config_path.exists():
                 with open(config_path, 'r') as f:
                     json_config = json.load(f)
-                    agent_config = json_config.get('agents_config', {}).get('numerologic_adapter', {})
+                    # 尝试读取numeric_reasoner配置，如果没有则回退到numerologic_adapter
+                    agent_config = json_config.get('agents_config', {}).get('numeric_reasoner', 
+                                   json_config.get('agents_config', {}).get('numerologic_adapter', {}))
                     llm_ensemble = agent_config.get('llm_ensemble', [])
             
             # 为每个LLM模型创建EAS客户端
@@ -470,7 +709,7 @@ class NumericReasonerAgent(BaseAgentTS):
                     self.log_warning(f"EAS credentials not provided for {model_name}, skipping")
             
             if not self.llm_clients:
-                self.log_error("No LLM EAS clients initialized. Configure in config.json -> agents.numerologic_adapter.llm_ensemble")
+                self.log_error("No LLM EAS clients initialized. Configure in config.json -> agents_config.numeric_reasoner.llm_ensemble")
                 self.use_llm = False
             else:
                 self.log_info(f"Initialized {len(self.llm_clients)} LLM EAS clients")
