@@ -141,24 +141,24 @@ class TSModelsToolkit:
         for key, value in config.__dict__.items():
             setattr(args, key, value)
         
-        # 添加一些可能需要的额外参数
-        args.freq = 'h'
-        args.embed = 'timeF'
-        args.factor = 1
-        args.distil = True
-        args.moving_avg = 25
-        args.use_norm = True
-        args.channel_independence = 1
-        args.decomp_method = 'moving_avg'
-        args.down_sampling_layers = 0
-        args.down_sampling_window = 1
-        args.down_sampling_method = None
-        args.seg_len = 96
-        args.top_k = 5
-        args.num_kernels = 6
-        args.expand = 2
-        args.d_conv = 4
-        args.patch_len = 16
+        # 添加所有可能需要的参数（兼容各种模型）
+        args.freq = getattr(config, 'freq', 'h')
+        args.embed = getattr(config, 'embed', 'timeF')
+        args.factor = getattr(config, 'factor', 1)
+        args.distil = getattr(config, 'distil', True)
+        args.moving_avg = getattr(config, 'moving_avg', 25)
+        args.use_norm = getattr(config, 'use_norm', True)
+        args.channel_independence = getattr(config, 'channel_independence', 1)
+        args.decomp_method = getattr(config, 'decomp_method', 'moving_avg')
+        args.down_sampling_layers = getattr(config, 'down_sampling_layers', 0)
+        args.down_sampling_window = getattr(config, 'down_sampling_window', 1)
+        args.down_sampling_method = getattr(config, 'down_sampling_method', None)
+        args.seg_len = getattr(config, 'seg_len', 96)
+        args.top_k = getattr(config, 'top_k', 5)
+        args.num_kernels = getattr(config, 'num_kernels', 6)
+        args.expand = getattr(config, 'expand', 2)
+        args.d_conv = getattr(config, 'd_conv', 4)
+        args.patch_len = getattr(config, 'patch_len', 16)
         
         return args
     

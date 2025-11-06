@@ -1,6 +1,38 @@
 \appendix
 \onecolumn
 
+\section{Implementation Details}\label{sec:detail}
+
+\subsection{Datasets}
+
+We evaluate MAS4TS on diverse benchmarks covering four fundamental tasks:
+
+\paragraph{Long-term Forecasting.} We use 8 widely-adopted datasets consistent with prior benchmarks~\cite{zhou2021informer,wu2023timesnet}: 
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+    \item \textit{ETT (Electricity Transformer Temperature)}: Four subsets (ETTh1, ETTh2, ETTm1, ETTm2) with hourly and 15-minute granularity.
+    \item \textit{Weather}: 21 meteorological indicators collected from the Weather Station of the Max Planck Biogeochemistry Institute.
+    \item \textit{Electricity}: Electricity consumption of 321 clients from 2012 to 2014, recorded hourly.
+    \item \textit{Traffic}: Road occupancy rates measured by 862 sensors in San Francisco Bay area.
+\end{itemize}
+
+\paragraph{Classification.} We use 7 multivariate datasets from the UEA Time Series Classification Archive~\cite{bagnall2018uea} with varying sequence lengths (24-2709 steps) and dimensions (1-144 variables).
+
+\paragraph{Imputation.} We evaluate on ETTh1 and Weather with time series length 512, randomly masking $\{12.5\%, 25\%, 37.5\%, 50\%\}$ of time points.
+
+\paragraph{Anomaly Detection.} We use MSL, SMAP~\cite{hundman2018detecting}, SMD~\cite{su2019robust}, and SWaT~\cite{mathur2016swat}.
+
+\subsection{Baselines}
+
+We compare against 18 state-of-the-art methods: Informer~\cite{zhou2021informer}, Autoformer~\cite{wu2021autoformer}, FEDformer~\cite{zhou2022fedformer}, Stationary~\cite{liu2022non}, Crossformer~\cite{zhang2023crossformer}, PatchTST~\cite{nie2022time}, iTransformer~\cite{liu2023itransformer}, TimesNet~\cite{wu2023timesnet}, DLinear~\cite{zeng2023transformers}, SCINet~\cite{liu2022scinet}, TimeMixer~\cite{wangtimemixer}, TimeMixer++~\cite{wang2024timemixer++}, TiDE~\cite{das2023long}, Time-LLM~\cite{jin2023time}, UniTime~\cite{liu2024unitime}, GPT4TS~\cite{zhou2023one}, AnomalyTransformer, and InceptionTime.
+
+\subsection{Implementation Details}
+
+\paragraph{Training.} PyTorch 2.0, CUDA 11.8, NVIDIA A100 GPUs. Adam optimizer with learning rate $1 \times 10^{-4}$, batch size 32, max 10 epochs with early stopping (patience=3).
+
+\paragraph{Architecture.} Hidden dimension $d_{\text{model}}=128$ for Numerologic Adapter. Visual Anchor generates $\alpha=0.95$ confidence intervals. Knowledge Retriever uses $k=10$ nearest neighbors.
+
+\paragraph{Reproducibility.} Random seed 2021, each experiment run 3 times with average reported.
+
 \input{appendix/A_Experimental_Details}
 \input{appendix/B_Complete_Results}
 \input{appendix/C_Visualizations}

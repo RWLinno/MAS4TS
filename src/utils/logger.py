@@ -26,10 +26,9 @@ def setup_logger(log_level: str = "INFO", config: Dict[str, Any] = None) -> logg
     config = config or {}
     
     # Get configuration values
-    if isinstance(log_level, str):
-        log_level = log_level.upper()
-    else:
-        log_level = config.get("level", "INFO").upper()
+    if not isinstance(log_level, str):
+        log_level = config.get("level", "INFO")
+    log_level = log_level.upper()
     
     log_format = config.get("format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     log_dir = config.get("log_dir", "logs")

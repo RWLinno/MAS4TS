@@ -35,11 +35,48 @@ class BatchProcessor:
         self.pred_len = config.get('pred_len', 96)
         self.label_len = config.get('label_len', 48)
         
-        # 归一化参数
-        self.use_norm = config.get('use_norm', True)
+        # 从config.json加载data_processing配置
+        self._load_data_processing_config()
+        
+        # 允许传入的config覆盖
+        self.use_norm = config.get('use_norm', self.use_norm)
         self.scaler = None
         
         logger.info(f"BatchProcessor initialized for task: {self.task_name}")
+    
+    def _load_data_processing_config(self):
+        """从config.json的data_analyzer配置中加载data_processing"""
+        try:
+            import json
+            from pathlib import Path
+            
+            config_path = Path(__file__).parent.parent / 'config.json'
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    json_config = json.load(f)
+                    agent_config = json_config.get('agents_config', {}).get('data_analyzer', {})
+                    data_proc = agent_config.get('data_processing', {})
+                    
+                    self.use_norm = data_proc.get('use_norm', True)
+                    self.clip_predictions = data_proc.get('clip_predictions', False)
+                    self.clip_min = data_proc.get('clip_min', -1e6)
+                    self.clip_max = data_proc.get('clip_max', 1e6)
+                    self.handle_missing = data_proc.get('handle_missing', True)
+            else:
+                # 默认值
+                self.use_norm = True
+                self.clip_predictions = False
+                self.clip_min = -1e6
+                self.clip_max = 1e6
+                self.handle_missing = True
+                
+        except Exception as e:
+            logger.error(f"Failed to load data_processing config: {e}, using defaults")
+            self.use_norm = True
+            self.clip_predictions = False
+            self.clip_min = -1e6
+            self.clip_max = 1e6
+            self.handle_missing = True
     
     def preprocess(self, batch_data: BatchData) -> BatchData:
         """
@@ -86,10 +123,10 @@ class BatchProcessor:
                 predictions = self._inverse_normalize(predictions, metadata['scaler_params'])
             
             # 裁剪异常值（可选）
-            if self.config.get('clip_predictions', False):
+            if self.clip_predictions:
                 predictions = torch.clamp(predictions, 
-                                        min=self.config.get('clip_min', -1e6),
-                                        max=self.config.get('clip_max', 1e6))
+                                        min=self.clip_min,
+                                        max=self.clip_max)
             
             return predictions
             

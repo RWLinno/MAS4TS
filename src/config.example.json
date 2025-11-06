@@ -113,7 +113,7 @@
     "loss": "MSE",
     "lradj": "type1",
     "itr": 1
-  },
+    },
   "datasets": {
     "ETTh1": {
       "root_path": "./dataset/ETT-small/",
@@ -124,7 +124,7 @@
       "enc_in": 7,
       "dec_in": 7,
       "c_out": 7
-    },
+  },
     "ETTm1": {
       "root_path": "./dataset/ETT-small/",
       "data_path": "ETTm1.csv",
@@ -134,7 +134,7 @@
       "enc_in": 7,
       "dec_in": 7,
       "c_out": 7
-    },
+  },
     "Weather": {
       "root_path": "./dataset/weather/",
       "data_path": "weather.csv",
@@ -144,7 +144,7 @@
       "enc_in": 21,
       "dec_in": 21,
       "c_out": 21
-    },
+  },
     "Electricity": {
       "root_path": "./dataset/electricity/",
       "data_path": "electricity.csv",
@@ -168,7 +168,7 @@
     "save_dir": "./checkpoints/",
     "save_every": 1,
     "keep_last_n": 5
-  },
+    },
   "evaluation": {
     "test_only": false,
     "save_predictions": true,
@@ -180,5 +180,5 @@
     "disable_numerologic_adapter": false,
     "disable_knowledge_retriever": false,
     "use_single_agent": false
-  }
+    }
 }

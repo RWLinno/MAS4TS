@@ -46,6 +46,10 @@ class Exp_Basic(object):
             from models import Mamba
             self.model_dict['Mamba'] = Mamba
 
+        if args.model == 'MAS4TS':
+            from models import MAS4TS
+            self.model_dict['MAS4TS'] = MAS4TS
+
         self.device = self._acquire_device()
         self.model = self._build_model().to(self.device)
 

@@ -21,10 +21,14 @@ class ManagerAgent(BaseAgentTS):
     2. 制定执行计划，分配子任务给专门的agents
     3. 协调agents之间的通信和数据流
     4. 整合各agent的结果，生成最终输出
+    5. 优化批量并行推理效率
     """
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__("ManagerAgent", config)
+        
+        # 从config.json读取全局parallel配置
+        self._load_parallel_config()
         
         # 任务类型映射
         self.task_types = {
@@ -42,7 +46,52 @@ class ManagerAgent(BaseAgentTS):
             'task_executor': 4
         })
         
-        self.use_parallel = config.get('use_parallel_agents', True)
+        # 允许传入的config覆盖
+        self.use_parallel = config.get('use_parallel_agents', self.use_parallel)
+        self.enable_batch_parallel = config.get('enable_batch_parallel', self.enable_batch_parallel)
+        self.max_parallel_batches = config.get('max_parallel_batches', self.max_parallel_batches)
+    
+    def _load_parallel_config(self):
+        """从config.json加载全局parallel配置"""
+        try:
+            import json
+            from pathlib import Path
+            
+            config_path = Path(__file__).parent.parent / 'config.json'
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    json_config = json.load(f)
+                    global_config = json_config.get('global_config', {})
+                    parallel_config = global_config.get('parallel_execution', {})
+                    
+                    self.use_parallel = global_config.get('use_parallel_agents', True)
+                    self.enable_batch_parallel = parallel_config.get('enable_batch_parallel', True)
+                    self.max_parallel_batches = parallel_config.get('max_parallel_batches', 4)
+                    self.enable_batch_splitting = parallel_config.get('enable_batch_splitting', True)
+                    self.num_splits = parallel_config.get('num_splits', 2)
+                    self.enable_concurrent_llm = parallel_config.get('enable_concurrent_llm', True)
+                    self.max_concurrent_requests = parallel_config.get('max_concurrent_requests', 5)
+                    
+                    self.log_info(f"Loaded parallel config: batch_parallel={self.enable_batch_parallel}, max_batches={self.max_parallel_batches}")
+            else:
+                # 默认值
+                self.use_parallel = True
+                self.enable_batch_parallel = True
+                self.max_parallel_batches = 4
+                self.enable_batch_splitting = True
+                self.num_splits = 2
+                self.enable_concurrent_llm = True
+                self.max_concurrent_requests = 5
+                
+        except Exception as e:
+            self.log_error(f"Failed to load parallel config: {e}, using defaults")
+            self.use_parallel = True
+            self.enable_batch_parallel = True
+            self.max_parallel_batches = 4
+            self.enable_batch_splitting = True
+            self.num_splits = 2
+            self.enable_concurrent_llm = True
+            self.max_concurrent_requests = 5
         
     async def process(self, input_data: Dict[str, Any]) -> AgentOutput:
         """
@@ -118,45 +167,79 @@ class ManagerAgent(BaseAgentTS):
     
     async def _plan_forecasting(self, data: torch.Tensor, config: Dict, 
                                agents: Dict) -> Dict[str, Any]:
-        """制定预测任务的执行计划"""
+        """
+        制定预测任务的执行计划 - 完整的4个Agent流程:
+        1. Data Analyzer: 分析数据+生成plot图
+        2. Visual Anchor: VLM读图+生成锚点
+        3. Numerical Adapter: LLM数值推理+并发ensemble
+        4. Task Executor: 最终预测输出
+        """
         plan = {
             'task_type': 'forecasting',
             'stages': [
                 {
                     'stage': 1,
+                    'name': 'Data Analysis & Visualization',
                     'agents': ['data_analyzer'],
                     'parallel': False,
-                    'input': {'data': data, 'config': config},
-                    'output_keys': ['processed_data', 'data_features']
+                    'input': {
+                        'data': data,
+                        'original_data': config.get('original_data', data),
+                        'config': config,
+                        'task': 'full_analysis_with_plot'
+                    },
+                    'output_keys': ['data_features', 'plot_path', 'statistics_text']
                 },
                 {
                     'stage': 2,
-                    'agents': ['visual_anchor', 'knowledge_retriever'],
-                    'parallel': True,
-                    'input': {'data': 'processed_data', 'features': 'data_features'},
-                    'output_keys': ['visual_anchors', 'semantic_priors']
+                    'name': 'Visual Anchoring with VLM',
+                    'agents': ['visual_anchor'],
+                    'parallel': False,
+                    'input': {
+                        'plot_path': 'plot_path',
+                        'statistics_text': 'statistics_text',
+                        'data_features': 'data_features',
+                        'task': 'forecasting',
+                        'pred_len': config.get('pred_len', 96),
+                        'batch_idx': config.get('batch_idx', 0)
+                    },
+                    'output_keys': ['visual_anchors', 'semantic_priors', 'anchor_image_path']
                 },
                 {
                     'stage': 3,
+                    'name': 'Numerical Reasoning with LLM Ensemble',
                     'agents': ['numerologic_adapter'],
                     'parallel': False,
                     'input': {
-                        'data': 'processed_data',
+                        'data': data,
+                        'data_features': 'data_features',
                         'anchors': 'visual_anchors',
-                        'priors': 'semantic_priors'
+                        'semantic_priors': 'semantic_priors',
+                        'statistics_text': 'statistics_text',
+                        'use_parallel_llm': True,
+                        'num_llm_models': 3,
+                        'batch_idx': config.get('batch_idx', 0)
                     },
-                    'output_keys': ['adapted_features']
+                    'output_keys': ['adapted_features', 'numerical_constraints']
                 },
                 {
                     'stage': 4,
+                    'name': 'Task Execution',
                     'agents': ['task_executor'],
                     'parallel': False,
                     'input': {
-                        'data': 'processed_data',
-                        'features': 'adapted_features',
-                        'task': 'forecasting'
+                        'data': data,
+                        'task': 'forecasting',
+                        'features': {
+                            'adapted_features': 'adapted_features',
+                            'numerical_constraints': 'numerical_constraints',
+                            'visual_anchors': 'visual_anchors'
+                        },
+                        'config': {
+                        'pred_len': config.get('pred_len', 96)
+                        }
                     },
-                    'output_keys': ['predictions']
+                    'output_keys': ['final_predictions']
                 }
             ]
         }
@@ -279,7 +362,7 @@ class ManagerAgent(BaseAgentTS):
     async def _execute_plan(self, plan: Dict[str, Any], 
                            agents: Dict[str, BaseAgentTS]) -> Dict[str, Any]:
         """
-        执行计划
+        执行计划 - 支持批量并行优化
         """
         results = {}
         
@@ -291,8 +374,30 @@ class ManagerAgent(BaseAgentTS):
             
             self.log_info(f"Executing stage {stage} with agents: {agent_names}")
             
+            # 检查是否可以批量并行处理
+            can_batch_parallel = self.enable_batch_parallel and 'data' in stage_input
+            
+            if can_batch_parallel and isinstance(stage_input.get('data'), torch.Tensor):
+                # 批量并行处理
+                data = stage_input['data']
+                batch_size = data.size(0)
+                
+                # 如果batch很大，分割并并行处理
+                if batch_size > 8:  # 阈值可配置
+                    self.log_info(f"Batch size {batch_size} > 8, enabling batch-level parallelism")
+                    stage_output = await self._execute_stage_with_batch_parallel(
+                        agent_names, stage_input, stage_info, agents
+                    )
+                    # 合并批量结果
+                    output_keys = stage_info['output_keys']
+                    for key in output_keys:
+                        if key in stage_output:
+                            results[key] = stage_output[key]
+                    continue
+            
+            # 原有逻辑：agent级别的并行或顺序执行
             if parallel and len(agent_names) > 1:
-                # 并行执行
+                # 并行执行多个agent
                 tasks = []
                 for agent_name in agent_names:
                     if agent_name in agents:
@@ -303,10 +408,22 @@ class ManagerAgent(BaseAgentTS):
                 
                 # 合并结果
                 for i, agent_name in enumerate(agent_names):
+                    if i >= len(stage_results):
+                        continue
                     output = stage_results[i]
                     output_keys = stage_info['output_keys']
-                    if len(output_keys) > i:
-                        results[output_keys[i]] = output.result
+                    if isinstance(output.result, dict):
+                        # 如果result是字典，展开其内容到对应的output_keys
+                        for j, key in enumerate(output_keys):
+                            if key in output.result:
+                                results[key] = output.result[key]
+                            elif j == 0:
+                                # 第一个output_key获取整个result字典
+                                results[key] = output.result
+                    else:
+                        # 单个结果
+                        if len(output_keys) > 0 and i < len(output_keys):
+                            results[output_keys[i]] = output.result
             else:
                 # 顺序执行
                 for i, agent_name in enumerate(agent_names):
@@ -315,10 +432,80 @@ class ManagerAgent(BaseAgentTS):
                         output = await agent.process(stage_input)
                         
                         output_keys = stage_info['output_keys']
-                        if len(output_keys) > i:
-                            results[output_keys[i]] = output.result
+                        # 处理agent的输出
+                        if isinstance(output.result, dict):
+                            # 展开字典结果到results中
+                            for j, key in enumerate(output_keys):
+                                if key in output.result:
+                                    results[key] = output.result[key]
+                                elif j == 0:
+                                    # 第一个output_key获取整个result
+                                    results[key] = output.result
+                        else:
+                            # 单个结果
+                            if len(output_keys) > 0:
+                                results[output_keys[0]] = output.result
         
         return results
+    
+    async def _execute_stage_with_batch_parallel(self, agent_names: List[str],
+                                                  stage_input: Dict,
+                                                  stage_info: Dict,
+                                                  agents: Dict) -> Dict[str, Any]:
+        """
+        批量并行执行 - 将大batch分割成小batch并发处理
+        """
+        data = stage_input['data']
+        batch_size = data.size(0)
+        
+        # 计算每个sub-batch的大小
+        num_sub_batches = min(self.max_parallel_batches, max(2, batch_size // 4))
+        sub_batch_size = batch_size // num_sub_batches
+        
+        self.log_info(f"Splitting batch {batch_size} into {num_sub_batches} sub-batches")
+        
+        # 创建sub-batch任务
+        tasks = []
+        for i in range(num_sub_batches):
+            start_idx = i * sub_batch_size
+            end_idx = (i + 1) * sub_batch_size if i < num_sub_batches - 1 else batch_size
+            
+            # 创建sub-batch输入
+            sub_input = stage_input.copy()
+            sub_input['data'] = data[start_idx:end_idx]
+            if 'batch_idx' in sub_input:
+                sub_input['batch_idx'] = i
+            
+            # 为每个sub-batch创建agent处理任务
+            for agent_name in agent_names:
+                if agent_name in agents:
+                    agent = agents[agent_name]
+                    tasks.append((i, agent.process(sub_input)))
+        
+        # 并发执行所有sub-batch
+        all_results = await asyncio.gather(*[task[1] for task in tasks])
+        
+        # 合并结果
+        merged_results = {}
+        output_keys = stage_info['output_keys']
+        
+        for key in output_keys:
+            key_results = []
+            for result_output in all_results:
+                if result_output.success and isinstance(result_output.result, dict):
+                    if key in result_output.result:
+                        key_results.append(result_output.result[key])
+            
+            # 合并tensor结果
+            if key_results and isinstance(key_results[0], torch.Tensor):
+                merged_results[key] = torch.cat(key_results, dim=0)
+            elif key_results and isinstance(key_results[0], dict):
+                # 对于字典结果，取第一个（假设它们是相同的配置）
+                merged_results[key] = key_results[0]
+            elif key_results:
+                merged_results[key] = key_results[0]
+        
+        return merged_results
     
     def _prepare_stage_input(self, input_spec: Dict, previous_results: Dict) -> Dict[str, Any]:
         """
@@ -328,8 +515,11 @@ class ManagerAgent(BaseAgentTS):
         for key, value in input_spec.items():
             if isinstance(value, str) and value in previous_results:
                 stage_input[key] = previous_results[value]
+            elif isinstance(value, dict):
+                # 递归处理嵌套字典
+                stage_input[key] = self._prepare_stage_input(value, previous_results)
             elif isinstance(value, list):
-                stage_input[key] = [previous_results.get(v, v) for v in value]
+                stage_input[key] = [previous_results.get(v, v) if isinstance(v, str) else v for v in value]
             else:
                 stage_input[key] = value
         return stage_input
@@ -340,15 +530,15 @@ class ManagerAgent(BaseAgentTS):
         """
         # 根据任务类型选择最终结果
         if task_type == 'forecasting':
-            return results.get('predictions', None)
+            return results.get('final_predictions', results.get('predictions', None))
         elif task_type == 'classification':
-            return results.get('class_predictions', None)
+            return results.get('final_predictions', results.get('class_predictions', None))
         elif task_type == 'imputation':
-            return results.get('imputed_data', None)
+            return results.get('final_predictions', results.get('imputed_data', None))
         elif task_type == 'anomaly_detection':
-            return results.get('anomaly_scores', None)
+            return results.get('final_predictions', results.get('anomaly_scores', None))
         else:
-            return results.get('result', results)
+            return results.get('final_predictions', results.get('result', results))
     
     def _calculate_confidence(self, results: Dict[str, Any]) -> float:
         """

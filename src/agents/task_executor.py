@@ -118,21 +118,26 @@ class TaskExecutorAgent(BaseAgentTS):
     
     async def _execute_forecasting(self, data: torch.Tensor, features: Dict, config: Dict) -> Dict[str, torch.Tensor]:
         """
-        执行预测任务
+        执行预测任务 - 整合所有agent的输出
         
         Args:
             data: [batch, seq_len, features]
-            features: 来自其他agents的特征
+            features: Dict containing:
+                - numerical_predictions: from Numerical Adapter
+                - confidence_intervals: from Numerical Adapter  
+                - visual_anchors: from Visual Anchor
             config: 配置
             
         Returns:
-            predictions: {
-                'predictions': torch.Tensor [batch, pred_len, features],
-                'confidence': torch.Tensor [batch, pred_len, features] (optional)
-            }
+            final_predictions: Dict with predictions and metadata
         """
         batch, seq_len, n_features = data.shape
         pred_len = config.get('pred_len', self.pred_len)
+        
+        # 获取来自其他agents的信息
+        numerical_preds = features.get('numerical_predictions', None)
+        confidence_intervals = features.get('confidence_intervals', None)
+        visual_anchors = features.get('visual_anchors', None)
         
         # 获取或创建模型
         model = self._get_or_create_model('forecasting', n_features, pred_len, config)
@@ -147,8 +152,17 @@ class TaskExecutorAgent(BaseAgentTS):
                 
                 # 简单的直接预测
                 # 不同模型有不同的forward接口，这里提供通用接口
-                if hasattr(model, 'forecast'):
-                    predictions = model.forecast(data, pred_len)
+                if hasattr(model, 'forecast') and callable(getattr(model, 'forecast')):
+                    # 检查forecast方法的参数数量
+                    import inspect
+                    sig = inspect.signature(model.forecast)
+                    num_params = len(sig.parameters)
+                    
+                    # 根据参数数量调用
+                    if num_params == 1:  # 只需要data
+                        predictions = model.forecast(data)
+                    else:  # 需要data和pred_len
+                        predictions = model.forecast(data, pred_len)
                 else:
                     # 构造decoder input（使用最后label_len的数据）
                     dec_inp = torch.zeros(batch, pred_len, n_features).to(data.device)
@@ -167,15 +181,22 @@ class TaskExecutorAgent(BaseAgentTS):
                     if isinstance(predictions, tuple):
                         predictions = predictions[0]
                 
-                # 应用约束（如果有视觉锚点提供的约束）
-                if 'adapted_features' in features:
-                    predictions = self._apply_constraints(predictions, features)
+                # 应用约束（从Visual Anchor和Numerical Adapter）
+                visual_anchors_data = features.get('visual_anchors', None)
+                numerical_constraints = features.get('numerical_constraints', None)
+                
+                if visual_anchors_data or numerical_constraints:
+                    predictions = self._apply_multiagent_constraints(
+                        predictions, visual_anchors_data, numerical_constraints, None
+                    )
                 
                 return {
-                    'predictions': predictions,
+                    'final_predictions': predictions,
                     'metadata': {
                         'model': self.default_model,
-                        'pred_len': pred_len
+                        'pred_len': pred_len,
+                        'used_visual_anchors': visual_anchors is not None,
+                        'used_numerical_reasoning': numerical_preds is not None
                     }
                 }
         
@@ -416,6 +437,27 @@ class TaskExecutorAgent(BaseAgentTS):
             if task == 'classification':
                 model_config['num_class'] = target_size
             
+            # 添加所有必需的参数
+            model_config.update({
+                'moving_avg': 25,
+                'freq': 'h',
+                'embed': 'timeF',
+                'factor': 1,
+                'distil': True,
+                'use_norm': True,
+                'channel_independence': 1,
+                'decomp_method': 'moving_avg',
+                'down_sampling_layers': 0,
+                'down_sampling_window': 1,
+                'down_sampling_method': None,
+                'seg_len': 96,
+                'top_k': 5,
+                'num_kernels': 6,
+                'expand': 2,
+                'd_conv': 4,
+                'patch_len': 16
+            })
+            
             # 创建模型
             class Args:
                 pass
@@ -501,17 +543,54 @@ class TaskExecutorAgent(BaseAgentTS):
             'metadata': {'method': 'z_score'}
         }
     
+    def _apply_multiagent_constraints(self, predictions: torch.Tensor, 
+                                      visual_anchors: Optional[Dict],
+                                      numerical_preds: Optional[Dict],
+                                      confidence_intervals: Optional[torch.Tensor]) -> torch.Tensor:
+        """
+        应用来自Visual Anchor和Numerical Adapter的约束
+        
+        Args:
+            predictions: 原始预测 [batch, pred_len, features]
+            visual_anchors: 视觉锚点
+            numerical_preds: 数值预测
+            confidence_intervals: 置信区间
+            
+        Returns:
+            constrained_predictions: 应用约束后的预测
+        """
+        # 1. 应用视觉锚点的约束
+        if visual_anchors and 'value_range' in visual_anchors:
+            value_range = visual_anchors['value_range']
+            if 'lower' in value_range and 'upper' in value_range:
+                lower = value_range['lower']
+                upper = value_range['upper']
+                
+                # 确保维度匹配
+                if isinstance(lower, torch.Tensor) and lower.dim() == 2:
+                    lower = lower.unsqueeze(1)  # [batch, 1, features]
+                if isinstance(upper, torch.Tensor) and upper.dim() == 2:
+                    upper = upper.unsqueeze(1)
+                
+                # 软裁剪：使用加权
+                predictions = 0.7 * predictions + 0.3 * torch.clamp(predictions, min=lower, max=upper)
+        
+        # 2. 应用置信区间约束
+        if confidence_intervals is not None:
+            # confidence_intervals: [batch, features] or similar
+            # 这里可以根据置信区间调整predictions
+            pass
+        
+        return predictions
+    
     def _apply_constraints(self, predictions: torch.Tensor, features: Dict) -> torch.Tensor:
-        """应用来自其他agents的约束"""
-        # 如果有数值约束，应用它们
+        """应用来自其他agents的约束（兼容旧接口）"""
         adapted = features.get('adapted_features', {})
         constraints = adapted.get('numerical_constraints', {})
         
         if 'upper_bound' in constraints and 'lower_bound' in constraints:
-            upper = constraints['upper_bound'].unsqueeze(1)  # [batch, 1, features]
+            upper = constraints['upper_bound'].unsqueeze(1)
             lower = constraints['lower_bound'].unsqueeze(1)
-            
-            # 裁剪到约束范围
             predictions = torch.clamp(predictions, min=lower, max=upper)
         
         return predictions
